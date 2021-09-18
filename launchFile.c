@@ -5,6 +5,11 @@ This code needs a configuration file, with name: ConfigurationFile.txt . This Fi
 3 row RF for the formula
 
 The process G must be compiled with the name "G"
+
+The user can interract by sanding the following singlas:
+- SIGUSR1 = to print the logs on the command window 
+- SIGUSR2 = to stop P and G processes in order to stop tokens receaving/sending and computing
+- SIGCONT = to resume P and G previously interrupted
 */
 
 #include <stdio.h>
@@ -31,11 +36,9 @@ The process G must be compiled with the name "G"
        __typeof__ (b) _b = (b); \
      _a > _b ? _a : _b; })
 
-double newToken; // ?
-double *recivedMsg;
-char *timeString; // serve 
-pid_t pid_S, pid_G, pid_L, pid_P; // serve
+pid_t pid_S, pid_G, pid_L, pid_P; 
 
+// file descriptor of all pipes
 int fd_PS, fd_PG, fd_PL;
 
 char fileTokenName[30] = "token_";
@@ -68,9 +71,12 @@ void error(const char *msg)
 	exit(0);
 }
 
+/// to write data in the log file 
 void logFile(char pName, float tokenG_1, float tokenG)
 {
 	FILE *f;
+	char *timeString;
+
 	f = fopen("logFile.log", "a");
 	time_t currentTime;
 	currentTime = time(NULL);
@@ -81,13 +87,13 @@ void logFile(char pName, float tokenG_1, float tokenG)
 		switch ((int)tokenG_1)
 		{
 		case 10://SIGUSR1
-			fprintf(f, "\n-%s From %c action: stop.\n", timeString, pName);
+			fprintf(f, "\n-%s From %c action: dump.\n", timeString, pName);
 			break;
 		case 12://SIGUSR2
-			fprintf(f, "\n-%s From %c action: start.\n", timeString, pName);
+			fprintf(f, "\n-%s From %c action: stop.\n", timeString, pName);
 			break;
 		case 18://SIGCONT
-			fprintf(f, "\n-%s From %c action: dump.\n", timeString, pName);
+			fprintf(f, "\n-%s From %c action: start.\n", timeString, pName);
 			break;
 		default:
 			break;
@@ -102,23 +108,21 @@ void logFile(char pName, float tokenG_1, float tokenG)
 	fclose(f);
 }
 
-// E' diverso da robbi 
+
 void sig_handler(int signo)
 {
+
 	if (signo == SIGUSR1) // dump log 
 	{
+		char *timeString;
+		time_t currentTime;
+		currentTime = time(NULL);
+		timeString = ctime(&currentTime);
 		printf("Received SIGUSR1\n");
 		printf("%d\n", pid_S);
 		//logFile(pid_S, (double)signo);
 		write(fd_PS, &signo, sizeof(signo));
 		printf("-%sPID: %d value:%s.\n", timeString, pid_S, signame[(int)signo]);
-	}
-	else if (signo == SIGCONT)
-	{
-		printf("Received SIGCONT\n"); // resume processes 
-		kill(pid_P, signo);
-		kill(pid_G, signo);
-		write(fd_PS, &signo, sizeof(signo));
 	}
 	else if (signo == SIGUSR2) // stop processes
 	{
@@ -127,13 +131,20 @@ void sig_handler(int signo)
 		kill(pid_P, SIGSTOP);
 		kill(pid_G, SIGSTOP);
 	}
+	else if (signo == SIGCONT) // resume processes 
+	{
+		printf("Received SIGCONT\n"); 
+		kill(pid_P, signo);
+		kill(pid_G, signo);
+		write(fd_PS, &signo, sizeof(signo));
+	}
+
 }
 
+/// read data from the configuration file
 void readConfigurationFile(char *ip, char *port, int *wt, int *rf){
 
  	FILE * fConfig;
-    char * line = NULL;
-    size_t len = 5;
 
  	fConfig = fopen("ConfigurationFile.txt", "r");
     if (fConfig == NULL){
@@ -153,12 +164,10 @@ void readConfigurationFile(char *ip, char *port, int *wt, int *rf){
 	printf("RF : %d\n", *rf);
 
     fclose(fConfig);
-    if (line) // ?????????????????????????????
-        free(line);
 
 }
 
-// functions for plotting the token values
+/// functions for plotting the token values
 void tokenFileInit(int rf)
 {
  	FILE *tokenFile;
@@ -189,7 +198,6 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 	char *argdata[4];  //data struct to pass to process G
 	char *cmd = "./G"; //process G path
 
-	printf("ciao oooooooo");
 	readConfigurationFile(ip, port, &wt, &rf);
 
 	float msg; // ?
