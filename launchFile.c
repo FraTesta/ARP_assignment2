@@ -5,11 +5,6 @@ This code needs a configuration file, with name: ConfigurationFile.txt . This Fi
 3 row RF for the formula
 
 The process G must be compiled with the name "G"
-
-signals must be sent to S process, and are the following:
-SIGUSR1 : dump L process
-SIGUSR2 : stop G and P process
-SIGCONT : start G and P prosess
 */
 
 #include <stdio.h>
@@ -23,25 +18,49 @@ SIGCONT : start G and P prosess
 #include <errno.h>
 #include <signal.h>
 #include <time.h>
+#include <sys/time.h>
+#include <inttypes.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <math.h>
 #include <netdb.h>
+
+#define max(a, b) \
+	({ __typeof__ (a) _a = (a); \
+       __typeof__ (b) _b = (b); \
+     _a > _b ? _a : _b; })
 
 double newToken; // ?
 double *recivedMsg;
-char *timeString;
-pid_t pid_S, pid_G, pid_L, pid_P;
+char *timeString; // serve 
+pid_t pid_S, pid_G, pid_L, pid_P; // serve
 
-char IP[20];
-char port[20];
-char RF[20];
+int fd_PS, fd_PG, fd_PL;
+
+char fileTokenName[30] = "token_";
+
+typedef struct{
+	timeval time;
+	double token;
+}socket_msg;
+
+socket_msg message; // ???????????????? serve o no 
+
+typedef struct{
+	char process;
+	float tokenG_1; // token from G-1
+	float tokenG; // current token computed by P process of this machine
+}pipe_msg;
+
+socket_msg socketMsg;
 
 char *signame[] = {"INVALID", "SIGHUP", "SIGINT", "SIGQUIT", "SIGILL", "SIGTRAP", "SIGABRT", "SIGBUS", "SIGFPE", "SIGKILL", "SIGUSR1", "SIGSEGV", "SIGUSR2", "SIGPIPE", "SIGALRM", "SIGTERM", "SIGSTKFLT", "SIGCHLD", "SIGCONT", "SIGSTOP", "SIGTSTP", "SIGTTIN", "SIGTTOU", "SIGURG", "SIGXCPU", "SIGXFSZ", "SIGVTALRM", "SIGPROF", "SIGWINCH", "SIGPOLL", "SIGPWR", "SIGSYS", NULL};
 
-char *myfifo1 = "myfifo1"; 
-char *myfifo2 = "myfifo2"; 
-char *myfifo3 = "myfifo3"; 
+char *pipePS = "pipePS"; 
+char *pipePG = "pipePG"; 
+char *pipePL = "pipePL"; 
+
 
 void error(const char *msg)
 {
@@ -49,126 +68,185 @@ void error(const char *msg)
 	exit(0);
 }
 
-void logFile(pid_t process_id, double message)
+void logFile(char pName, float tokenG_1, float tokenG)
 {
 	FILE *f;
 	f = fopen("logFile.log", "a");
 	time_t currentTime;
 	currentTime = time(NULL);
 	timeString = ctime(&currentTime);
-	fprintf(f, "-%sPID: %d value:%.3f.\n", timeString, process_id, message);
-	fprintf(f, "-%s%.3f.\n\n", timeString, newToken);
+
+	if (pName == 'S')
+	{
+		switch ((int)tokenG_1)
+		{
+		case 10://SIGUSR1
+			fprintf(f, "\n-%s From %c action: stop.\n", timeString, pName);
+			break;
+		case 12://SIGUSR2
+			fprintf(f, "\n-%s From %c action: start.\n", timeString, pName);
+			break;
+		case 18://SIGCONT
+			fprintf(f, "\n-%s From %c action: dump.\n", timeString, pName);
+			break;
+		default:
+			break;
+		}
+	}else if(pName == 'G'){
+		fprintf(f, "\n-%s From %c value:%.3f.\n", timeString, pName, tokenG_1);
+		fprintf(f, "-%s New value:%.3f.\n", timeString, tokenG);
+	}else{
+
+	}
 
 	fclose(f);
 }
 
+// E' diverso da robbi 
 void sig_handler(int signo)
 {
-	if (signo == SIGUSR1) //dump log signal
+	if (signo == SIGUSR1) // dump log 
 	{
 		printf("Received SIGUSR1\n");
 		printf("%d\n", pid_S);
-		logFile(pid_S, (double)signo);
+		//logFile(pid_S, (double)signo);
+		write(fd_PS, &signo, sizeof(signo));
 		printf("-%sPID: %d value:%s.\n", timeString, pid_S, signame[(int)signo]);
-		printf("-%s%.3f.\n\n", timeString, newToken);
 	}
 	else if (signo == SIGCONT)
 	{
-		printf("Received SIGCONT\n"); // start signal
+		printf("Received SIGCONT\n"); // resume processes 
 		kill(pid_P, signo);
 		kill(pid_G, signo);
+		write(fd_PS, &signo, sizeof(signo));
 	}
-	else if (signo == SIGUSR2) // stop signal
+	else if (signo == SIGUSR2) // stop processes
 	{
 		printf("Received SIGUSR2\n");
+		write(fd_PS, &signo, sizeof(signo));
 		kill(pid_P, SIGSTOP);
 		kill(pid_G, SIGSTOP);
 	}
 }
 
-void readConfigurationFile(){
+void readConfigurationFile(char *ip, char *port, int *wt, int *rf){
 
- FILE * fConfig;
+ 	FILE * fConfig;
     char * line = NULL;
     size_t len = 5;
 
- fConfig = fopen("ConfigurationFile.txt", "r");
+ 	fConfig = fopen("ConfigurationFile.txt", "r");
     if (fConfig == NULL){
-
+		perror("failure");
         exit(EXIT_FAILURE);
-	perror("failure");
 	}
 
-    fscanf(fConfig, "%s", IP);
-    fscanf(fConfig, "%s", port);
-    //fscanf(fConfig, "%s", RF);
+	fscanf(fConfig, "%s", ip);
+	fscanf(fConfig, "%s", port);
+	fscanf(fConfig, "%d", wt);
+	fscanf(fConfig, "%d", rf);
 
-	
-     fclose(fConfig);
-    if (line)
+	printf("//////////////////////// \n Configuration parameters: \n");
+	printf("IP : %s\n", ip);
+	printf("Port : %s\n", port);
+	printf("Waiting time : %d\n", wt);
+	printf("RF : %d\n", *rf);
+
+    fclose(fConfig);
+    if (line) // ?????????????????????????????
         free(line);
 
+}
+
+// functions for plotting the token values
+void tokenFileInit(int rf)
+{
+ 	FILE *tokenFile;
+
+	char rfStr[10];
+	sprintf(rfStr, "%d", rf);
+	strcat(fileTokenName, rfStr);
+	strcat(fileTokenName,".txt");
+	tokenFile = fopen(fileTokenName, "w+");
+}
+void tokenFile(double token)
+{
+	FILE *tokenFile;
+	tokenFile = fopen(fileTokenName, "a");
+	fprintf(tokenFile, "%f\n",token);
+	fclose(tokenFile);
 }
 
 //////////////////////////////////////////////////////////////////// S PROCESS Start ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 int main(int argc, char *argv[]) //This is the proces S which is the father of evry other processes
 {
-	int res; // ?
-	char *argdata[4];  //process G data
+	char port[128];   //Socket port
+	char ip[32];	  //IP address of the next student
+	int wt;			  // Waiting time
+	int rf;			  //Frequency of the sine wave
+
+	char *argdata[4];  //data struct to pass to process G
 	char *cmd = "./G"; //process G path
 
-	readConfigurationFile();
-	
-	struct timeval tv; //time variable for the "select"
+	printf("ciao oooooooo");
+	readConfigurationFile(ip, port, &wt, &rf);
 
-	float msg; // message from L
+	float msg; // ?
 	int o; // ?
+
+	pipe_msg pipe_msg_G, pipe_msg_S;
 
 	argdata[0] = cmd;
 	argdata[1] = port;
-	argdata[2] = myfifo2;
+	argdata[2] = (char *)pipePG;
 	argdata[3] = NULL;
 
+	int tokenFlag = 1; // flag which represents the sign of the token function
+	// tokenFlag = 1   -->  increasing function 
+	// tokenFlag = 0   -->  decreasing function 
+
+	//Initialize file for token values plotting 
+	tokenFileInit(rf);
 	/*-----------------------------------------Pipes Initialization---------------------------------------*/
 
-	if (mkfifo(myfifo1, S_IRUSR | S_IWUSR) != 0) 
-		perror("Cannot create fifo 1. Already existing?");
+	if (mkfifo(pipePS, S_IRUSR | S_IWUSR) != 0) // pipe P|S
+		perror("Cannot create fifo 1. Already existing?"); 
 
-	if (mkfifo(myfifo2, S_IRUSR | S_IWUSR) != 0)
-		perror("Cannot create fifo 2. Already existing?");
+	if (mkfifo(pipePG, S_IRUSR | S_IWUSR) != 0) // pipe P|G
+		perror("Cannot create fifo 2. Already existing?"); 
 
-	if (mkfifo(myfifo3, S_IRUSR | S_IWUSR) != 0) 
+	if (mkfifo(pipePL, S_IRUSR | S_IWUSR) != 0) // pipe P|L
 		perror("Cannot create fifo 3. Already existing?");
 
-	int fd1 = open(myfifo1, O_RDWR); //open the pipe1, dedicated to comunication with S
+	fd_PS = open(pipePS, O_RDWR); //open the pipePS, dedicated to comunication with S
 
-	if (fd1 == 0)
+	if (fd_PS == 0)
 	{
 		error("Cannot open fifo 1");
-		unlink(myfifo1);
+		unlink(pipePS);
 		exit(1);
 	}
 
-	int fd2 = open(myfifo2, O_RDWR); //open the pipe2, dedicated to comunication with G
+	fd_PG = open(pipePG, O_RDWR); //open the pipePG, dedicated to comunication with G
 
-	if (fd2 == 0)
+	if (fd_PG == 0)
 	{
 		perror("Cannot open fifo 2");
-		unlink(myfifo2);
+		unlink(pipePG);
 		exit(1);
 	}
 
-	int fd3 = open(myfifo3, O_RDWR); //open the pipe3, dedicated to comunication with L
+	fd_PL = open(pipePL, O_RDWR); //open the pipePL, dedicated to comunication with L
 
-	if (fd3 == 0)
+	if (fd_PL == 0)
 	{
 		perror("Cannot open fifo 3");
-		unlink(myfifo3);
+		unlink(pipePL);
 		exit(1);
 	}
 
-	printf("\n");
+	printf("//////////////////////// \n");
 
 	/*-------------------------------------------PROCESS P--------------------------------------*/
 
@@ -183,9 +261,19 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 	{
 		printf("Hey I'm P and my PID is : %d.\n", getpid());
 
-		float token;
-		int w; // variable to check the "writes" 
+		timeval current_time;
+		float delay_time;
+		struct timeval tv;  // timeout for pipe select 
+		
+
+		socket_msg line_G;
+		int line_S; 
+		fd_set rfds; // for pipe select 
+		int retval, fd_select; // return value of select function and unified file descriptor for pipe select 
+
+		int n; // variable to check the writes and reads
 		float q; // ?
+		float token_G_1; // token value coming from G-1 
 
 		sleep(2);
 
@@ -199,7 +287,7 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 		if (sockfd < 0)
 			error("ERROR opening socket");
 		
-		server = gethostbyname(IP); // server assignment
+		server = gethostbyname(ip); // server assignment
 		if (server == NULL)
 			error("ERROR, no such host\n");
 		bzero((char *)&serv_addr, sizeof(serv_addr));
@@ -209,97 +297,163 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 		if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
 			error("ERROR connecting");
 
-		w = write(sockfd, &token, sizeof(token));
-		if (w < 0)
+		n = write(sockfd, &line_G, sizeof(line_G));
+		if (n < 0)
 			error("ERROR writing to socket");
 
+		// Pipe Select body 
 		while (1)
 		{
-			//SELECT initialization
-			int retval, n;
-			fd_set rfds; 
-			int fd = fd1; // fd bigger, initialized as fd1
-
-		
 			FD_ZERO(&rfds);
-			FD_SET(fd1, &rfds);
-            FD_SET(fd2, &rfds);
+			FD_SET(fd_PS, &rfds);
+			FD_SET(fd_PG, &rfds);
 
-			tv.tv_sec = 2;
+			fd_select = max(fd_PS, fd_PG);
+
+			tv.tv_sec = 5;
 			tv.tv_usec = 0;
 
-            if(fd1<fd2) // check what fd is bigger
-               fd = fd2;
+			retval = select(fd_select + 1, &rfds, NULL, NULL, &tv);
 
-			retval = select(fd + 1, &rfds, NULL, NULL, &tv);
-
-			if (retval == -1)
-				perror("select()");
-
-
-			/////SWITCH SELECT
 			switch (retval)
 			{
 
 			case 0:
-				printf("no avaiable data\n");
+			//Either no active pipes or the timeout has expired
+				printf("No data avaiable.\n");
 				break;
 
 			case 1:
-				if (FD_ISSET(fd1,&rfds))
+				// If only one pipe is active, check which is between S and G
+				if (FD_ISSET(fd_PS, &rfds))
 				{
-					n = read(fd1, &q, sizeof(q));
-					printf("From S recived message = %.3f \n", q);
-					sleep((int)q);
+					n = read(fd_PS, &line_S, sizeof(line_S));
+					if (n < 0)
+						error("ERROR reading from S");
+
+					printf("From S recivedMsg = %s.\n", signame[line_S]);
+
+					pipe_msg_S.process = 'S';
+					pipe_msg_S.tokenG_1 = line_S;
+					pipe_msg_S.tokenG = 0;
+
+					n = write(fd_PL, &pipe_msg_S, sizeof(pipe_msg_S));
+					if (n < 0)
+						error("ERROR writing to L");		
+
 				}
-				else if (FD_ISSET(fd2,&rfds))
+				else if (FD_ISSET(fd_PG, &rfds))
 				{
-					n = read(fd2, &token, sizeof(token));
-				
-					printf("From G recived token = %.3f \n", token);
+					// If G, make the computation and log the results through L
+					n = read(fd_PG, &line_G, sizeof(line_G));
+					if (n < 0)
+						error("ERROR reading from G");
 
-					w = write(fd3, &token, sizeof(token));
-					if (w < 0)
+					/* if (line_G < -1 || line_G > 1)
+					{
+						printf("Value should be between -1 and 1!.\n");
+						break;
+					} */
+
+					printf("From G recived token = %.3f \n", line_G.token);
+
+					// Creating message to send to L 
+					pipe_msg_G.process = 'G';
+					pipe_msg_G.tokenG_1 = line_G.token;
+
+					/* n = write(fd_PL, &line_G, sizeof(line_G));
+					if (n < 0)
+						error("ERROR writing to L"); */
+
+					// Get the current time 
+					gettimeofday(&current_time, NULL);
+
+					// Compute DT
+					delay_time = (double)(current_time.tv_sec - message.time.tv_sec) + (double)(current_time.tv_usec - message.time.tv_usec)/(double)1000000;
+
+					token_G_1 = line_G.token;
+					//message.token = token_G_1 + delay_time * (1 - pow(token_G_1,2)/2 ) * 2 * 3.14 * rf;
+
+					switch(tokenFlag)
+						{
+							case 0:
+								message.token = token_G_1 * cos(2 * 3.14 * rf * delay_time) - sqrt(1 - pow(token_G_1,2)/2 ) * sin(2 * 3.14 * rf * delay_time);
+								if (message.token < -1){
+									message.token = -1;
+									tokenFlag = 1;
+								}
+								break;
+							case 1:
+								message.token = token_G_1 * cos(2 * 3.14 * rf * delay_time) + sqrt(1 - pow(token_G_1,2)/2 ) * sin(2 * 3.14 * rf * delay_time);
+								if (message.token > 1){
+									message.token = 1;
+									tokenFlag = 0;
+								}
+								break;
+						}
+
+					// save token values on the txt file
+					tokenFile(message.token);
+					
+					message.time = current_time;
+					//line_G += 1; 			////////////////////////////////////////////FORMULA////////////////////////////////////////////////
+					//message.token = line_G;
+
+					pipe_msg_G.tokenG = message.token;
+
+					// Send new value to L
+					n = write(fd_PL, &pipe_msg_G, sizeof(pipe_msg_G));
+					if (n < 0)
 						error("ERROR writing to L");
 
-                    //formula
-					token += 1;
-
-                    newToken = token;
-
-                    w = write(fd3, &token, sizeof(token)); //rewrite in L the new token value
-					if (w < 0)
-						error("ERROR writing to L");
-
-					w = write(sockfd, &token, sizeof(token)); //send the new token to G+1
-					if (w < 0)
+					// Write new value to the socket
+					//n = write(sockfd, &line_G, sizeof(line_G));
+					n = write(sockfd, &message, sizeof(message));
+					if (n < 0)
 						error("ERROR writing to socket");
+					
+					//clock_gettime(CLOCK_REALTIME,&prev_time);
+
+					usleep(wt); 	//Simulate communication delay
 				}
+
+				sleep(1);
 				break;
 
-			case 2: 
-				n = read(fd1, &token, sizeof(token));
-				printf("From S recived message = %.3f \n", token);
+			case 2:
+				// If two active pipes, give priority to S
+				n = read(fd_PS, &line_S, sizeof(line_S));
+					if (n < 0)
+						error("ERROR reading from S");
+
+					printf("From S recivedMsg = %s.\n", signame[line_S]);
+
+					pipe_msg_S.process = 'S';
+					pipe_msg_S.tokenG_1 = line_S;
+					pipe_msg_S.tokenG = 0;
+
+					n = write(fd_PL, &pipe_msg_S, sizeof(pipe_msg_S));
+					if (n < 0)
+						error("ERROR writing to L");	
 				break;
 
 			default:
-				printf("Select error!\n");
+				perror("You should not be here!");
 				break;
 			}
-            sleep(1);
 		}
 
-		wait(&res);
-
 		//close all fifo 
-		close(fd1);
-		unlink(myfifo1);
+		close(fd_PS);
+		unlink(pipePS);
 
-		close(fd2);
-		unlink(myfifo2);
+		close(fd_PG);
+		unlink(pipePG);
 
-		close(fd3);
-		unlink(myfifo3);
+		close(fd_PL);
+		unlink(pipePL);
+
+		close(sockfd);
 	}
 
 	else
@@ -316,15 +470,17 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 		if (pid_L == 0) 
 		{
 			printf("Hey I'm L and my PID is : %d.\n", getpid());
+			pipe_msg log_msg;
 			while (1)
 			{
-				o = read(fd3, &msg, sizeof(msg));
+				o = read(fd_PL, &log_msg, sizeof(log_msg));
 				if (o < 0)
 					error("ERROR reciving file to L");
-				logFile(getpid(), msg);
+
+				logFile(log_msg.process, log_msg.tokenG_1, log_msg.tokenG);
 			}
-			close(fd3);
-			unlink(myfifo3);
+			close(fd_PL);
+			unlink(pipePL);
 		}
 
 		else
@@ -366,21 +522,23 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 			if (signal(SIGUSR2, sig_handler) == SIG_ERR)
 				printf("Can't catch SIGUSER2\n");
 
-			float t = 1;
-			int g;
-			sleep(20);
 
+			sleep(5);
 
 
 			while (1)
 			{
-            g = write(fd1, &t, sizeof(t));
-			if (g < 0)
-				error("size");
-			sleep(10);
-
+				// sleep ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
 			};
 
+			close(fd_PS);
+			unlink(pipePS);
+
+			close(fd_PG);
+			unlink(pipePG);
+
+			close(fd_PL);
+			unlink(pipePL);
 			return 0;
 		}
 	}
