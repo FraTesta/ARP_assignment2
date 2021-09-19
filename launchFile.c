@@ -1,14 +1,16 @@
 /*
-This code needs a configuration file, with name: ConfigurationFile.txt . This File must contain :
-1 row IP 
-2 row port
-3 row RF for the formula
+This code needs a configuration file, with name: ConfigurationFile.txt . 
+That File must contain :
+1 row: IP 
+2 row: port
+3 row: RF for the formula
+4 row: waiting time value
 
 The process G must be compiled with the name "G"
 
 The user can interract by sanding the following singlas:
 - SIGUSR1 = to print the logs on the command window 
-- SIGUSR2 = to stop P and G processes in order to stop tokens receaving/sending and computing
+- SIGUSR2 = to stop P and G processes in order to stop tokens receaving, sending and computing
 - SIGCONT = to resume P and G previously interrupted
 */
 
@@ -36,17 +38,22 @@ The user can interract by sanding the following singlas:
        __typeof__ (b) _b = (b); \
      _a > _b ? _a : _b; })
 
+#define SIGUSR1 10
+#define SIGUSR2 12
+#define SIGCONT 18
+
 pid_t pid_S, pid_G, pid_L, pid_P; 
 
 // file descriptor of all pipes
 int fd_PS, fd_PG, fd_PL;
 
-char fileTokenName[30] = "token_";
+// name of the plot file
+char fileTokenName[30] = "token_rf_";
 
 
+// data struct for messages both for pipes and socket
 typedef struct{
-	//struct timeval time; // G-1 sending time
-	clock_t time;
+	clock_t time; // time of the previous token computation
 	char process; // process who sent the msg
 	float tokenG_1; // token from G-1
 	float tokenG = 0; // current token computed by P process of this machine
@@ -67,7 +74,7 @@ void error(const char *msg)
 	exit(0);
 }
 
-/// to write data in the log file 
+/// function to write data in the log file 
 void logFile(char pName, float tokenG_1, float tokenG)
 {
 	FILE *f;
@@ -82,16 +89,17 @@ void logFile(char pName, float tokenG_1, float tokenG)
 	{
 		switch ((int)tokenG_1)
 		{
-		case 10://SIGUSR1
+		case SIGUSR1:
 			fprintf(f, "\n-%s From %c action: dump.\n", timeString, pName);
 			break;
-		case 12://SIGUSR2
+		case SIGUSR2:
 			fprintf(f, "\n-%s From %c action: stop.\n", timeString, pName);
 			break;
-		case 18://SIGCONT
+		case SIGCONT:
 			fprintf(f, "\n-%s From %c action: start.\n", timeString, pName);
 			break;
 		default:
+			printf("unmanaged signal");
 			break;
 		}
 	}else if(pName == 'G'){
@@ -108,28 +116,24 @@ void logFile(char pName, float tokenG_1, float tokenG)
 void sig_handler(int signo)
 {
 
-	if (signo == SIGUSR1) // dump log 
+	if (signo == SIGUSR1) // dump log action 
 	{
 		char *timeString;
 		time_t currentTime;
 		currentTime = time(NULL);
 		timeString = ctime(&currentTime);
 		printf("Received SIGUSR1\n");
-		printf("%d\n", pid_S);
 		write(fd_PS, &signo, sizeof(signo));
-		printf("-%sPID: %d value:%s.\n", timeString, pid_S, signame[(int)signo]);
 	}
-	else if (signo == SIGUSR2) // stop processes
+	else if (signo == SIGUSR2) // stop processes action 
 	{
 		printf("Received SIGUSR2\n");
 		write(fd_PS, &signo, sizeof(signo));
-		kill(pid_P, SIGSTOP);
 		kill(pid_G, SIGSTOP);
 	}
-	else if (signo == SIGCONT) // resume processes 
+	else if (signo == SIGCONT) // resume processes action 
 	{
 		printf("Received SIGCONT\n"); 
-		kill(pid_P, SIGCONT);
 		kill(pid_G, SIGCONT);
 		write(fd_PS, &signo, sizeof(signo));
 	}
@@ -140,6 +144,7 @@ void sig_handler(int signo)
 void readConfigurationFile(char *ip, char *port, int *wt, int *rf){
 
  	FILE * fConfig;
+	//char *wt_string;
 
  	fConfig = fopen("ConfigurationFile.txt", "r");
     if (fConfig == NULL){
@@ -152,6 +157,8 @@ void readConfigurationFile(char *ip, char *port, int *wt, int *rf){
 	fscanf(fConfig, "%d", wt);
 	fscanf(fConfig, "%d", rf);
 
+    //*wt = atoi(wt_string); 
+
 	printf("//////////////////////// \n Configuration parameters: \n");
 	printf("IP : %s\n", ip);
 	printf("Port : %s\n", port);
@@ -162,17 +169,49 @@ void readConfigurationFile(char *ip, char *port, int *wt, int *rf){
 
 }
 
-/// functions for plotting the token values
+// function to initialize the socket communication
+int socketInit(char *port, char *ip, msg line_G)
+{
+	int sockfd, portno;
+	struct sockaddr_in serv_addr;
+	struct hostent *server;
+	portno = atoi(port); // port assignment
+
+	sockfd = socket(AF_INET, SOCK_STREAM, 0);
+	if (sockfd < 0)
+		error("ERROR opening socket");
+	
+	server = gethostbyname(ip); // server assignment
+	if (server == NULL)
+		error("ERROR, no such host\n");
+	bzero((char *)&serv_addr, sizeof(serv_addr));
+	serv_addr.sin_family = AF_INET;
+	bcopy((char *)server->h_addr, (char *)&serv_addr.sin_addr.s_addr, server->h_length);
+	serv_addr.sin_port = htons(portno);
+	if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
+		error("socket ERROR");
+
+	// create the connection
+	int n = write(sockfd, &line_G, sizeof(line_G));
+	if (n < 0)
+		error("ERROR writing to socket");
+
+	return sockfd;
+}
+
+// functions for plotting the token values
+// init plot file
 void tokenFileInit(int rf)
 {
  	FILE *tokenFile;
 
-	char rfStr[10];
+	char rfStr[3];
 	sprintf(rfStr, "%d", rf);
 	strcat(fileTokenName, rfStr);
 	strcat(fileTokenName,".txt");
 	tokenFile = fopen(fileTokenName, "w+");
 }
+// write token values on the plot file
 void tokenFile(double token)
 {
 	FILE *tokenFile;
@@ -269,47 +308,28 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 
 	if (pid_P == 0)
 	{
-		printf("Hey I'm P and my PID is : %d.\n", getpid());
+		printf("Hey I'm P and my PID is : %d and my father is %d.\n", getpid(), getppid());
 
 		//struct timeval current_time;
 		clock_t current_time;
 		double delay_time = 0;
 		struct timeval tv;  // timeout for pipe select 
-		
+
+		int enable_log = 0;
 
 		fd_set rfds; // for pipe select 
 		int retval, fd_select; // return value of select function and unified file descriptor for pipe select 
 
 		float token_G_1; // token value coming from G-1 
 
-		sleep(2);
+		sleep(5); // give G time to initialize
 
-		/*-------------------------------------Socket (client) initialization---------------------------*/
-		int sockfd, portno;
-		struct sockaddr_in serv_addr;
-		struct hostent *server;
-		portno = atoi(port); // port assignment
+		// socket initialization
+		int sockfd = socketInit(port, ip, line_G);
 
-		sockfd = socket(AF_INET, SOCK_STREAM, 0);
-		if (sockfd < 0)
-			error("ERROR opening socket");
-		
-		server = gethostbyname(ip); // server assignment
-		if (server == NULL)
-			error("ERROR, no such host\n");
-		bzero((char *)&serv_addr, sizeof(serv_addr));
-		serv_addr.sin_family = AF_INET;
-		bcopy((char *)server->h_addr, (char *)&serv_addr.sin_addr.s_addr, server->h_length);
-		serv_addr.sin_port = htons(portno);
-		if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
-			error("ERROR connecting");
 
-		// create the connection
-		n = write(sockfd, &line_G, sizeof(line_G));
-		if (n < 0)
-			error("ERROR writing to socket");
 
-		// Pipe Select body 
+		/* ----------------------------------------------------- Pipe Select body ------------------------------------------------------------*/
 		while (1)
 		{
 			FD_ZERO(&rfds);
@@ -333,18 +353,25 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 
 			case 1:
 				// If only one pipe is active, check which is between S and G
-				if (FD_ISSET(fd_PS, &rfds))
+
+				if (FD_ISSET(fd_PS, &rfds))// MESSAGE FROM S
 				{
-					// message from S
+					
 					n = read(fd_PS, &line_S, sizeof(line_S));
 					if (n < 0)
 						error("ERROR reading from S");
 
-					printf("From S recivedMsg = %s.\n", signame[line_S]);
+					//printf("From S recivedMsg = %s.\n", signame[line_S]);
 
 					msg_S.process = 'S';
 					msg_S.sigType = line_S;
 
+					printf("line S = %d\n", line_S);
+					if (line_S == SIGUSR1)
+					{
+						enable_log = 1;
+					}
+					printf("enable value %d \n ", enable_log);
 					// send to L
 					n = write(fd_PL, &msg_S, sizeof(msg_S));
 					if (n < 0)
@@ -365,14 +392,9 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 					msg_G.tokenG_1 = line_G.tokenG;
 
 					// Get the current time 
-					//gettimeofday(&current_time, NULL);
 					current_time = clock();
 
-					//printf("prev time sec: %f, prev time us %f \n", line_G.time.tv_sec, line_G.time.tv_usec);
 					// Compute DT
-					//delay_time = (double)(current_time.tv_sec - line_G.time.tv_sec) + (double)(current_time.tv_usec - line_G.time.tv_usec)*0.000001f;
-					//printf("current time sec %f and usec: %f\n",current_time.tv_sec, current_time.tv_usec);
-					//delay_time = (double)(current_time.tv_sec ) + (double)(current_time.tv_usec )*0.000001f;
 					delay_time = (double)(current_time - line_G.time)/ CLOCKS_PER_SEC;
 					printf("delay time: %f\n", delay_time);
 
@@ -404,15 +426,17 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 					// save token values on the txt file
 					tokenFile(msg_G.tokenG);
 					
-					//msg_G.time.tv_sec = current_time.tv_sec;
-					//msg_G.time.tv_usec = current_time.tv_usec;
 					msg_G.time = current_time;
 
-
+					//printf("enable log = %d \n",enable_log);
 					// Send new value to L
-					n = write(fd_PL, &msg_G, sizeof(msg_G));
-					if (n < 0)
-						error("ERROR writing to L");
+					if (enable_log == 1)
+					{
+						n = write(fd_PL, &msg_G, sizeof(msg_G));
+						if (n < 0)
+							error("ERROR writing to L");
+					}
+
 
 					// Write new value to the socket
 					n = write(sockfd, &msg_G, sizeof(msg_G));
@@ -436,6 +460,12 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 
 					msg_S.process = 'S';
 					msg_S.tokenG_1 = line_S;
+
+
+					if (line_S == SIGUSR1)
+					{
+						enable_log = 1;
+					}
 
 					n = write(fd_PL, &msg_S, sizeof(msg_S));
 					if (n < 0)
@@ -474,7 +504,7 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 
 		if (pid_L == 0) 
 		{
-			printf("Hey I'm L and my PID is : %d.\n", getpid());
+			printf("Hey I'm L and my PID is : %d and my father is %d.\n", getpid(), getppid());
 			msg log_msg;
 			while (1)
 			{
@@ -502,7 +532,7 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 
 			if (pid_G == 0)
 			{
-				printf("Hey I'm G and my PID is : %d.\n", getpid());
+				printf("Hey I'm G and my PID is : %dand my father is %d.\n", getpid(), getppid());
 				execvp(argdata[0], argdata);
 				error("Exec fallita");
 				return 0;
@@ -513,7 +543,7 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 
 			pid_S = getpid();
 
-			printf("Hey I'm S and my PID is : %d.\n", pid_S);
+			printf("Hey I'm S and my PID is : %d and my father is %d.\n", pid_S, getppid());
 
 
 			// signal management                        

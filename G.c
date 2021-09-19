@@ -18,9 +18,13 @@
 #include <string.h>
 
 typedef struct{
-	timeval time;
-	double token;
-}socket_msg;
+	clock_t time;
+	char process; // process who sent the msg
+	float tokenG_1; // token from G-1
+	float tokenG = 0; // current token computed by P process of this machine
+	int sigType; // type of signal 
+}msg;
+
 
 void error(const char *msg)
 {
@@ -35,7 +39,7 @@ int main(int argc, char *argv[])
      int sockfd, newsockfd, portno;
      socklen_t clilen;
      //float receave_buffer;
-     socket_msg receave_buffer;
+     msg receave_buffer;
      struct sockaddr_in serv_addr, cli_addr;
      int n;
      if (argc < 2)
@@ -78,11 +82,6 @@ int main(int argc, char *argv[])
 
           int nb2 = write(fd_PG, &receave_buffer, sizeof(receave_buffer)); //scrivo ciò che leggo nella fifo
 
-          //printf("Here is the socket_msg: %.3f\n", receave_buffer);
-
-          /* n = write(newsockfd, "I got your socket_msg", 18);
-          if (n < 0)
-               error("ERROR writing to socket"); */
      }
 
      close(fd_PG);
