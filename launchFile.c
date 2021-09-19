@@ -22,8 +22,8 @@ The user can interract by sanding the following singlas:
 #include <string.h>
 #include <errno.h>
 #include <signal.h>
-#include <time.h>
 #include <sys/time.h>
+#include <time.h>
 #include <inttypes.h>
 #include <sys/select.h>
 #include <sys/socket.h>
@@ -43,20 +43,16 @@ int fd_PS, fd_PG, fd_PL;
 
 char fileTokenName[30] = "token_";
 
-typedef struct{
-	timeval time;
-	double token;
-}socket_msg;
-
-socket_msg message; // ???????????????? serve o no 
 
 typedef struct{
-	char process;
+	//struct timeval time; // G-1 sending time
+	clock_t time;
+	char process; // process who sent the msg
 	float tokenG_1; // token from G-1
-	float tokenG; // current token computed by P process of this machine
-}pipe_msg;
+	float tokenG = 0; // current token computed by P process of this machine
+	int sigType; // type of signal 
+}msg;
 
-socket_msg socketMsg;
 
 char *signame[] = {"INVALID", "SIGHUP", "SIGINT", "SIGQUIT", "SIGILL", "SIGTRAP", "SIGABRT", "SIGBUS", "SIGFPE", "SIGKILL", "SIGUSR1", "SIGSEGV", "SIGUSR2", "SIGPIPE", "SIGALRM", "SIGTERM", "SIGSTKFLT", "SIGCHLD", "SIGCONT", "SIGSTOP", "SIGTSTP", "SIGTTIN", "SIGTTOU", "SIGURG", "SIGXCPU", "SIGXFSZ", "SIGVTALRM", "SIGPROF", "SIGWINCH", "SIGPOLL", "SIGPWR", "SIGSYS", NULL};
 
@@ -120,7 +116,6 @@ void sig_handler(int signo)
 		timeString = ctime(&currentTime);
 		printf("Received SIGUSR1\n");
 		printf("%d\n", pid_S);
-		//logFile(pid_S, (double)signo);
 		write(fd_PS, &signo, sizeof(signo));
 		printf("-%sPID: %d value:%s.\n", timeString, pid_S, signame[(int)signo]);
 	}
@@ -134,8 +129,8 @@ void sig_handler(int signo)
 	else if (signo == SIGCONT) // resume processes 
 	{
 		printf("Received SIGCONT\n"); 
-		kill(pid_P, signo);
-		kill(pid_G, signo);
+		kill(pid_P, SIGCONT);
+		kill(pid_G, SIGCONT);
 		write(fd_PS, &signo, sizeof(signo));
 	}
 
@@ -200,10 +195,15 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 
 	readConfigurationFile(ip, port, &wt, &rf);
 
-	float msg; // ?
-	int o; // ?
+	// new messages to send 
+	msg msg_G, msg_S;
+	// pipe msgs to read
+	msg line_G;
+	int line_S; 
 
-	pipe_msg pipe_msg_G, pipe_msg_S;
+	// initialize time
+	msg_G.time = clock(); 
+
 
 	argdata[0] = cmd;
 	argdata[1] = port;
@@ -213,6 +213,8 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 	int tokenFlag = 1; // flag which represents the sign of the token function
 	// tokenFlag = 1   -->  increasing function 
 	// tokenFlag = 0   -->  decreasing function 
+
+	int n; // variable to check the writes and reads
 
 	//Initialize file for token values plotting 
 	tokenFileInit(rf);
@@ -269,18 +271,15 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 	{
 		printf("Hey I'm P and my PID is : %d.\n", getpid());
 
-		timeval current_time;
-		float delay_time;
+		//struct timeval current_time;
+		clock_t current_time;
+		double delay_time = 0;
 		struct timeval tv;  // timeout for pipe select 
 		
 
-		socket_msg line_G;
-		int line_S; 
 		fd_set rfds; // for pipe select 
 		int retval, fd_select; // return value of select function and unified file descriptor for pipe select 
 
-		int n; // variable to check the writes and reads
-		float q; // ?
 		float token_G_1; // token value coming from G-1 
 
 		sleep(2);
@@ -305,6 +304,7 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 		if (connect(sockfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr)) < 0)
 			error("ERROR connecting");
 
+		// create the connection
 		n = write(sockfd, &line_G, sizeof(line_G));
 		if (n < 0)
 			error("ERROR writing to socket");
@@ -327,7 +327,7 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 			{
 
 			case 0:
-			//Either no active pipes or the timeout has expired
+				//Either no active pipes or the timeout has expired
 				printf("No data avaiable.\n");
 				break;
 
@@ -335,94 +335,92 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 				// If only one pipe is active, check which is between S and G
 				if (FD_ISSET(fd_PS, &rfds))
 				{
+					// message from S
 					n = read(fd_PS, &line_S, sizeof(line_S));
 					if (n < 0)
 						error("ERROR reading from S");
 
 					printf("From S recivedMsg = %s.\n", signame[line_S]);
 
-					pipe_msg_S.process = 'S';
-					pipe_msg_S.tokenG_1 = line_S;
-					pipe_msg_S.tokenG = 0;
+					msg_S.process = 'S';
+					msg_S.sigType = line_S;
 
-					n = write(fd_PL, &pipe_msg_S, sizeof(pipe_msg_S));
+					// send to L
+					n = write(fd_PL, &msg_S, sizeof(msg_S));
 					if (n < 0)
 						error("ERROR writing to L");		
 
 				}
 				else if (FD_ISSET(fd_PG, &rfds))
 				{
-					// If G, make the computation and log the results through L
+					// message from G
 					n = read(fd_PG, &line_G, sizeof(line_G));
 					if (n < 0)
 						error("ERROR reading from G");
 
-					/* if (line_G < -1 || line_G > 1)
-					{
-						printf("Value should be between -1 and 1!.\n");
-						break;
-					} */
-
-					printf("From G recived token = %.3f \n", line_G.token);
+					printf("From G-1 recived token = %.3f \n", line_G.tokenG);
 
 					// Creating message to send to L 
-					pipe_msg_G.process = 'G';
-					pipe_msg_G.tokenG_1 = line_G.token;
-
-					/* n = write(fd_PL, &line_G, sizeof(line_G));
-					if (n < 0)
-						error("ERROR writing to L"); */
+					msg_G.process = 'G';
+					msg_G.tokenG_1 = line_G.tokenG;
 
 					// Get the current time 
-					gettimeofday(&current_time, NULL);
+					//gettimeofday(&current_time, NULL);
+					current_time = clock();
 
+					//printf("prev time sec: %f, prev time us %f \n", line_G.time.tv_sec, line_G.time.tv_usec);
 					// Compute DT
-					delay_time = (double)(current_time.tv_sec - message.time.tv_sec) + (double)(current_time.tv_usec - message.time.tv_usec)/(double)1000000;
+					//delay_time = (double)(current_time.tv_sec - line_G.time.tv_sec) + (double)(current_time.tv_usec - line_G.time.tv_usec)*0.000001f;
+					//printf("current time sec %f and usec: %f\n",current_time.tv_sec, current_time.tv_usec);
+					//delay_time = (double)(current_time.tv_sec ) + (double)(current_time.tv_usec )*0.000001f;
+					delay_time = (double)(current_time - line_G.time)/ CLOCKS_PER_SEC;
+					printf("delay time: %f\n", delay_time);
 
-					token_G_1 = line_G.token;
+					token_G_1 = line_G.tokenG;
+
+					// regular formula 
 					//message.token = token_G_1 + delay_time * (1 - pow(token_G_1,2)/2 ) * 2 * 3.14 * rf;
 
 					switch(tokenFlag)
 						{
 							case 0:
-								message.token = token_G_1 * cos(2 * 3.14 * rf * delay_time) - sqrt(1 - pow(token_G_1,2)/2 ) * sin(2 * 3.14 * rf * delay_time);
-								if (message.token < -1){
-									message.token = -1;
+								// decreasing shape 
+								msg_G.tokenG = token_G_1 * cos(2 * 3.14 * rf * delay_time) - sqrt(1 - pow(token_G_1,2)/2 ) * sin(2 * 3.14 * rf * delay_time);
+								if (msg_G.tokenG < -1){
+									msg_G.tokenG = -1;
 									tokenFlag = 1;
 								}
 								break;
 							case 1:
-								message.token = token_G_1 * cos(2 * 3.14 * rf * delay_time) + sqrt(1 - pow(token_G_1,2)/2 ) * sin(2 * 3.14 * rf * delay_time);
-								if (message.token > 1){
-									message.token = 1;
+								// increasing shape
+								msg_G.tokenG = token_G_1 * cos(2 * 3.14 * rf * delay_time) + sqrt(1 - pow(token_G_1,2)/2 ) * sin(2 * 3.14 * rf * delay_time);
+								if (msg_G.tokenG > 1){
+									msg_G.tokenG = 1;
 									tokenFlag = 0;
 								}
 								break;
 						}
 
 					// save token values on the txt file
-					tokenFile(message.token);
+					tokenFile(msg_G.tokenG);
 					
-					message.time = current_time;
-					//line_G += 1; 			////////////////////////////////////////////FORMULA////////////////////////////////////////////////
-					//message.token = line_G;
+					//msg_G.time.tv_sec = current_time.tv_sec;
+					//msg_G.time.tv_usec = current_time.tv_usec;
+					msg_G.time = current_time;
 
-					pipe_msg_G.tokenG = message.token;
 
 					// Send new value to L
-					n = write(fd_PL, &pipe_msg_G, sizeof(pipe_msg_G));
+					n = write(fd_PL, &msg_G, sizeof(msg_G));
 					if (n < 0)
 						error("ERROR writing to L");
 
 					// Write new value to the socket
-					//n = write(sockfd, &line_G, sizeof(line_G));
-					n = write(sockfd, &message, sizeof(message));
+					n = write(sockfd, &msg_G, sizeof(msg_G));
 					if (n < 0)
 						error("ERROR writing to socket");
 					
-					//clock_gettime(CLOCK_REALTIME,&prev_time);
-
-					usleep(wt); 	//Simulate communication delay
+					//Simulate communication delay (waiting period)
+					usleep(wt); 	
 				}
 
 				sleep(1);
@@ -430,17 +428,16 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 
 			case 2:
 				// If two active pipes, give priority to S
-				n = read(fd_PS, &line_S, sizeof(line_S));
+					n = read(fd_PS, &line_S, sizeof(line_S));
 					if (n < 0)
 						error("ERROR reading from S");
 
 					printf("From S recivedMsg = %s.\n", signame[line_S]);
 
-					pipe_msg_S.process = 'S';
-					pipe_msg_S.tokenG_1 = line_S;
-					pipe_msg_S.tokenG = 0;
+					msg_S.process = 'S';
+					msg_S.tokenG_1 = line_S;
 
-					n = write(fd_PL, &pipe_msg_S, sizeof(pipe_msg_S));
+					n = write(fd_PL, &msg_S, sizeof(msg_S));
 					if (n < 0)
 						error("ERROR writing to L");	
 				break;
@@ -478,11 +475,11 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 		if (pid_L == 0) 
 		{
 			printf("Hey I'm L and my PID is : %d.\n", getpid());
-			pipe_msg log_msg;
+			msg log_msg;
 			while (1)
 			{
-				o = read(fd_PL, &log_msg, sizeof(log_msg));
-				if (o < 0)
+				n = read(fd_PL, &log_msg, sizeof(log_msg));
+				if (n < 0)
 					error("ERROR reciving file to L");
 
 				logFile(log_msg.process, log_msg.tokenG_1, log_msg.tokenG);
@@ -536,7 +533,7 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 
 			while (1)
 			{
-				// sleep ???????????????????????????????????????????????????????????????????????????????????????????????????????????????????????
+				sleep(1);
 			};
 
 			close(fd_PS);
