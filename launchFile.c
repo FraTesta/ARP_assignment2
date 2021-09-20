@@ -320,7 +320,7 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 
 	if (pid_P == 0)
 	{
-		printf("Hey I'm P and my PID is : %d and my father is %d.\n", getpid(), getppid());
+		printf("Hey I'm P and my PID is : %d \n", getpid());
 
 		//struct timeval current_time;
 		clock_t current_time;
@@ -515,7 +515,7 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 
 		if (pid_L == 0) 
 		{
-			printf("Hey I'm L and my PID is : %d and my father is %d.\n", getpid(), getppid());
+			printf("Hey I'm L and my PID is : %d\n", getpid());
 			msg log_msg;
 			while (1)
 			{
@@ -543,7 +543,7 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 
 			if (pid_G == 0)
 			{
-				printf("Hey I'm G and my PID is : %dand my father is %d.\n", getpid(), getppid());
+				printf("Hey I'm G and my PID is : %d\n", getpid());
 				execvp(argdata[0], argdata);
 				error("Exec fallita");
 				return 0;
@@ -554,7 +554,7 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 
 			pid_S = getpid();
 
-			printf("Hey I'm S and my PID is : %d and my father is %d.\n", pid_S, getppid());
+			printf("Hey I'm S and my PID is : %d \n", pid_S);
 
 
 			// signal management                        
