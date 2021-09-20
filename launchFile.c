@@ -397,7 +397,7 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 					if (n < 0)
 						error("ERROR reading from G");
 
-					printf("From G-1 recived token = %f \n", line_G.tokenG);
+					
 
 					// Creating message to send to L 
 					msg_G.process = 'G';
@@ -408,7 +408,6 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 
 					// Compute DT
 					delay_time = (double)(current_time - line_G.time)/ CLOCKS_PER_SEC;
-					printf("delay time: %f\n", delay_time);
 
 					token_G_1 = line_G.tokenG;
 
@@ -437,6 +436,7 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 
 					current_time = clock();
 					msg_G.time = current_time;
+
 					// save token values on the txt file
 					tokenFile(msg_G.tokenG, msg_G.time);
 
@@ -445,6 +445,8 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 					if (enable_log == 1)
 					{
 						n = write(fd_PL, &msg_G, sizeof(msg_G));
+						printf("new token = %f \n", msg_G.tokenG);
+						printf("delay time: %f\n", delay_time);
 						if (n < 0)
 							error("ERROR writing to L");
 					}
