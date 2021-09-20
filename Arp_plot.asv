@@ -1,0 +1,13 @@
+fileName = fopen('token_rf_1.txt','r');
+token = fscanf(fileName,'%f');
+fclose(fileName);
+
+fileName = fopen('token_rf1_sec.txt','r');
+time = fscanf(fileName,'%f');
+fclose(fileName);
+
+t = [1:1:length(token)]
+figure(1);
+plot(time(1:200),token(1:200));
+xline('time [s]');
+yline('token v');
