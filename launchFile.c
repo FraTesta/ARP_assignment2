@@ -419,7 +419,7 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 						{
 							case 0:
 								// decreasing shape 
-								msg_G.tokenG = token_G_1 * cos(2 * 3.14 * rf * delay_time) - sqrt(1 - pow(token_G_1,2) ) * sin(2 * 3.14 * rf * delay_time);
+								msg_G.tokenG = token_G_1 * cos(2 * 3.14 * rf * delay_time) - sqrt(1 - pow(token_G_1,2)/2 ) * sin(2 * 3.14 * rf * delay_time);
 								if (msg_G.tokenG < -1){
 									msg_G.tokenG = -1;
 									tokenFlag = 1;
@@ -427,7 +427,7 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 								break;
 							case 1:
 								// increasing shape
-								msg_G.tokenG = token_G_1 * cos(2 * 3.14 * rf * delay_time) + sqrt(1 - pow(token_G_1,2) ) * sin(2 * 3.14 * rf * delay_time);
+								msg_G.tokenG = token_G_1 * cos(2 * 3.14 * rf * delay_time) + sqrt(1 - pow(token_G_1,2)/2 ) * sin(2 * 3.14 * rf * delay_time);
 								if (msg_G.tokenG > 1){
 									msg_G.tokenG = 1;
 									tokenFlag = 0;
