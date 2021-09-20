@@ -57,7 +57,7 @@ typedef struct{
 	clock_t time; // time of the previous token computation
 	char process; // process who sent the msg
 	float tokenG_1; // token from G-1
-	float tokenG = 0; // current token computed by P process of this machine
+	float tokenG; // current token computed by P process of this machine
 	int sigType; // type of signal 
 }msg;
 
@@ -397,7 +397,7 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 					if (n < 0)
 						error("ERROR reading from G");
 
-					//printf("From G-1 recived token = %.3f \n", line_G.tokenG);
+					printf("From G-1 recived token = %f \n", line_G.tokenG);
 
 					// Creating message to send to L 
 					msg_G.process = 'G';
@@ -408,12 +408,12 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 
 					// Compute DT
 					delay_time = (double)(current_time - line_G.time)/ CLOCKS_PER_SEC;
-					//printf("delay time: %f\n", delay_time);
+					printf("delay time: %f\n", delay_time);
 
 					token_G_1 = line_G.tokenG;
 
 					// regular formula 
-					//message.token = token_G_1 + delay_time * (1 - pow(token_G_1,2)/2 ) * 2 * 3.14 * rf;
+					//msg_G.tokenG = token_G_1 + delay_time * (1 - pow(token_G_1,2)/2 ) * 2 * 3.14 * rf;
 
 					switch(tokenFlag)
 						{
