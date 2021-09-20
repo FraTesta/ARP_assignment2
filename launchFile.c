@@ -49,6 +49,7 @@ int fd_PS, fd_PG, fd_PL;
 
 // name of the plot file
 char fileTokenName[30] = "token_rf_";
+char fileTokenNameSec[35] = "token_rf";
 
 
 // data struct for messages both for pipes and socket
@@ -207,13 +208,27 @@ void tokenFileInit(int rf)
 	strcat(fileTokenName, rfStr);
 	strcat(fileTokenName,".txt");
 	tokenFile = fopen(fileTokenName, "w+");
+
+	FILE *tokenFileSec;
+
+	char rfStrSec[3];
+	sprintf(rfStrSec, "%d", rf);
+	strcat(fileTokenNameSec, rfStrSec);
+	strcat(fileTokenNameSec, "_sec");
+	strcat(fileTokenNameSec,".txt");
+	tokenFileSec = fopen(fileTokenNameSec, "w+");
 }
 // write token values on the plot file
-void tokenFile(double token)
+void tokenFile(double token, float time)
 {
 	FILE *tokenFile;
 	tokenFile = fopen(fileTokenName, "a");
 	fprintf(tokenFile, "%f\n",token);
+	fclose(tokenFile);
+
+	FILE *tokenFileSec;
+	tokenFileSec = fopen(fileTokenNameSec, "a");
+	fprintf(tokenFileSec, "%f\n",time);
 	fclose(tokenFile);
 }
 
@@ -404,7 +419,7 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 						{
 							case 0:
 								// decreasing shape 
-								msg_G.tokenG = token_G_1 * cos(2 * 3.14 * rf * delay_time) - sqrt(1 - pow(token_G_1,2)/2 ) * sin(2 * 3.14 * rf * delay_time);
+								msg_G.tokenG = token_G_1 * cos(2 * 3.14 * rf * delay_time) - sqrt(1 - pow(token_G_1,2) ) * sin(2 * 3.14 * rf * delay_time);
 								if (msg_G.tokenG < -1){
 									msg_G.tokenG = -1;
 									tokenFlag = 1;
@@ -412,7 +427,7 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 								break;
 							case 1:
 								// increasing shape
-								msg_G.tokenG = token_G_1 * cos(2 * 3.14 * rf * delay_time) + sqrt(1 - pow(token_G_1,2)/2 ) * sin(2 * 3.14 * rf * delay_time);
+								msg_G.tokenG = token_G_1 * cos(2 * 3.14 * rf * delay_time) + sqrt(1 - pow(token_G_1,2) ) * sin(2 * 3.14 * rf * delay_time);
 								if (msg_G.tokenG > 1){
 									msg_G.tokenG = 1;
 									tokenFlag = 0;
@@ -420,10 +435,11 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 								break;
 						}
 
-					// save token values on the txt file
-					tokenFile(msg_G.tokenG);
-					
+					current_time = clock();
 					msg_G.time = current_time;
+					// save token values on the txt file
+					tokenFile(msg_G.tokenG, msg_G.time);
+
 
 					// Send new value to L
 					if (enable_log == 1)
