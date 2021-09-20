@@ -144,7 +144,6 @@ void sig_handler(int signo)
 void readConfigurationFile(char *ip, char *port, int *wt, int *rf){
 
  	FILE * fConfig;
-	//char *wt_string;
 
  	fConfig = fopen("ConfigurationFile.txt", "r");
     if (fConfig == NULL){
@@ -157,12 +156,10 @@ void readConfigurationFile(char *ip, char *port, int *wt, int *rf){
 	fscanf(fConfig, "%d", wt);
 	fscanf(fConfig, "%d", rf);
 
-    //*wt = atoi(wt_string); 
-
 	printf("//////////////////////// \n Configuration parameters: \n");
 	printf("IP : %s\n", ip);
 	printf("Port : %s\n", port);
-	printf("Waiting time : %d\n", wt);
+	printf("Waiting time : %d\n", *wt);
 	printf("RF : %d\n", *rf);
 
     fclose(fConfig);
@@ -327,6 +324,9 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 		// socket initialization
 		int sockfd = socketInit(port, ip, line_G);
 
+		line_S = 0;
+		n = write(fd_PS, &line_S, sizeof(line_S));
+
 
 
 		/* ----------------------------------------------------- Pipe Select body ------------------------------------------------------------*/
@@ -361,17 +361,14 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 					if (n < 0)
 						error("ERROR reading from S");
 
-					//printf("From S recivedMsg = %s.\n", signame[line_S]);
-
 					msg_S.process = 'S';
 					msg_S.sigType = line_S;
 
-					printf("line S = %d\n", line_S);
 					if (line_S == SIGUSR1)
 					{
-						enable_log = 1;
+						enable_log = abs(enable_log -1);
 					}
-					printf("enable value %d \n ", enable_log);
+
 					// send to L
 					n = write(fd_PL, &msg_S, sizeof(msg_S));
 					if (n < 0)
@@ -385,7 +382,7 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 					if (n < 0)
 						error("ERROR reading from G");
 
-					printf("From G-1 recived token = %.3f \n", line_G.tokenG);
+					//printf("From G-1 recived token = %.3f \n", line_G.tokenG);
 
 					// Creating message to send to L 
 					msg_G.process = 'G';
@@ -396,7 +393,7 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 
 					// Compute DT
 					delay_time = (double)(current_time - line_G.time)/ CLOCKS_PER_SEC;
-					printf("delay time: %f\n", delay_time);
+					//printf("delay time: %f\n", delay_time);
 
 					token_G_1 = line_G.tokenG;
 
@@ -428,7 +425,6 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 					
 					msg_G.time = current_time;
 
-					//printf("enable log = %d \n",enable_log);
 					// Send new value to L
 					if (enable_log == 1)
 					{
@@ -456,15 +452,12 @@ int main(int argc, char *argv[]) //This is the proces S which is the father of e
 					if (n < 0)
 						error("ERROR reading from S");
 
-					printf("From S recivedMsg = %s.\n", signame[line_S]);
-
 					msg_S.process = 'S';
 					msg_S.tokenG_1 = line_S;
 
-
 					if (line_S == SIGUSR1)
 					{
-						enable_log = 1;
+						enable_log = abs(enable_log -1);
 					}
 
 					n = write(fd_PL, &msg_S, sizeof(msg_S));
